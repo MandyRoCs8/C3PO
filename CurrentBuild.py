@@ -1,28 +1,32 @@
-import openpyxl
-from docx import Document
-from tkinter import Tk, filedialog, Toplevel, Listbox, Button, END, EXTENDED
 import datetime
-import win32com.client
-import pymsgbox
 import os
-from tkcalendar import Calendar  # Add this import
+import win32com.client
+import openpyxl
+import pymsgbox
+from docx import Document
+from tkcalendar import Calendar
+from tkinter import Tk, filedialog, Toplevel, Listbox, Button, END, EXTENDED
+
+# A global variable to store the indices of the selected emails from the email_listbox
 selected_email_indices = ()
 
 
 def input_date(prompt):
     def on_select_date():
-        date_obj = calendar.selection_get()
         date_dialog.quit()
 
     date_dialog = Toplevel(root)
     date_dialog.title(prompt)
     date_dialog.lift()
     date_dialog.grab_set()
-    calendar = Calendar(date_dialog, selectmode="day", year=datetime.datetime.now().year, month=datetime.datetime.now().month, day=datetime.datetime.now().day)
+    calendar = Calendar(date_dialog, selectmode="day",
+                        year=datetime.datetime.now().year,
+                        month=datetime.datetime.now().month,
+                        day=datetime.datetime.now().day)
     calendar.pack(padx=10, pady=10)
 
-    select_button = Button(date_dialog, text="Select", command=on_select_date)
-    select_button.pack(pady=5)
+    date_select_button = Button(date_dialog, text="Select", command=on_select_date)  # Rename variable here
+    date_select_button.pack(pady=5)
 
     date_dialog.mainloop()
     date_dialog.destroy()
@@ -30,24 +34,8 @@ def input_date(prompt):
     return calendar.selection_get()
 
 
-def process_email(message, template_file):
-    # Load Word document
-    doc = Document(template_file)
-
-    # Extract data from email
-    attachments = message.Attachments
-    excel_file = ''
-    for attachment in attachments:
-        if attachment.FileName.endswith('.xlsx'):
-            attachment.SaveAsFile(os.path.join(os.getcwd(), attachment.FileName))
-            excel_file = attachment.FileName
-            print("Attachment saved to '{}'".format(excel_file))
-            break
-
-    if not excel_file:
-        print("No Excel file found in attachments.")
-        return
-
+# noinspection PyUnusedLocal
+def process_email(message, excel_file, word_doc):
     # Load Excel data
     wb = openpyxl.load_workbook(excel_file)
     ws = wb.active
@@ -73,22 +61,50 @@ def process_email(message, template_file):
         values[label] = value
 
         # Find the paragraph with the label in the Word document and add the value
-        for paragraph in doc.paragraphs:
+        for paragraph in current_doc.paragraphs:
+
             if label in paragraph.text:
                 # Add the value from the Excel file to the end of the paragraph
                 paragraph.add_run(" " + str(value))
                 print(f"Updated paragraph text: '{paragraph.text}'")
 
-        # Save the output file with a new filename
-    output_file = f"{os.path.splitext(template_file)[0]}_{message.Subject}_{message.ReceivedTime.strftime('%Y%m%d_%H%M%S')}.docx"
-    doc.save(output_file)
+    # Show message box
+    pymsgbox.alert("Please choose a location to save the output file in the upcoming dialog.", "Save Output File")
 
-    # Comment out the following line to stop automatically opening the output file
-    # os.startfile(output_file)
+    # Choose output file
+    output_file = filedialog.asksaveasfilename(title="Save Output File As", defaultextension=".docx",
+                                               filetypes=[("Word files", "*.docx")])
+    current_doc.save(output_file)
 
-    print("Data has been extracted and saved to the Word template.")
+    if not output_file:
+        print("No output file selected.")
+        exit()
+
+    # Save the output file
+    current_doc.save(output_file)
+
     # Delete temp Excel file
     os.remove(excel_file)
+
+    print("Data has been extracted and saved to the Word template.")
+
+
+def process_excel_data(excel_file, doc):
+    wb = openpyxl.load_workbook(excel_file)
+    ws = wb.active
+
+    # Loop over each row of the Excel sheet, skipping the first row
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        # Find the paragraph with the label in the Word document and add the value
+        for paragraph in doc.paragraphs:
+            if row[0] in paragraph.text:
+                # Add the value from the Excel file to the end
+                paragraph.add_run(" " + str(row[1]))
+                print(f"Updated paragraph text: '{paragraph.text}'")
+
+    # Delete temp Excel file
+    os.remove(excel_file)
+    print("Excel data has been extracted and saved to the Word template.")
 
 
 def on_select_emails():
@@ -97,7 +113,7 @@ def on_select_emails():
     email_selection_dialog.quit()
 
 
-# Show message box
+# Show message
 pymsgbox.alert("Please choose a Word template file in the upcoming dialog.", "Choose Word Template File")
 
 # Choose Word template file
@@ -109,7 +125,8 @@ if not template_file:
     exit()
 
 # Load Word document
-doc = Document(template_file)
+current_doc = Document(template_file)
+
 
 # Connect to Outlook
 outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
@@ -125,7 +142,11 @@ folder = outlook.GetDefaultFolder(6)  # Inbox folder
 
 messages = folder.Items
 messages.Sort("[ReceivedTime]", True)  # Sort messages by received time in descending order
-restriction = f"[ReceivedTime] >= '{start_date.strftime('%m/%d/%Y %I:%M %p')}' AND [ReceivedTime] <= '{end_date.strftime('%m/%d/%Y %I:%M %p')}'"
+restriction = (
+    f"[ReceivedTime] >= '{start_date.strftime('%m/%d/%Y %I:%M %p')}' "
+    f"AND [ReceivedTime] <= '{end_date.strftime('%m/%d/%Y %I:%M %p')}'"
+)
+
 restricted_messages = messages.Restrict(restriction)
 
 emails = [msg for msg in restricted_messages if subject in msg.Subject]
@@ -154,70 +175,24 @@ else:
     email_selection_dialog.mainloop()
     email_selection_dialog.destroy()
 
+    # Load Word document
+    template_doc = Document(template_file)  # Rename the variable here
+
     for selected_email_index in selected_email_indices:
-        message = emails[selected_email_index]
-        process_email(message, template_file)
+        selected_message = emails[selected_email_index]
 
-    # Extract data from email
-    attachments = message.Attachments
-    excel_file = ''
-    for attachment in attachments:
-        if attachment.FileName.endswith('.xlsx'):
-            attachment.SaveAsFile(os.path.join(os.getcwd(), attachment.FileName))
-            excel_file = attachment.FileName
-            print("Attachment saved to '{}'".format(excel_file))
-            break
+        # Extract data from email
+        attachments = selected_message.Attachments
+        selected_excel_file = ''
+        for attachment in attachments:
+            if attachment.FileName.endswith('.xlsx'):
+                attachment.SaveAsFile(os.path.join(os.getcwd(), attachment.FileName))
+                selected_excel_file = os.path.join(os.getcwd(), attachment.FileName)
+                print("Attachment saved to '{}'".format(selected_excel_file))
+                break
 
-    if not excel_file:
-        print("No Excel file found in attachments.")
-    else:
-        # Load Excel data
-        wb = openpyxl.load_workbook(excel_file)
-        ws = wb.active
-
-        # Create dictionary with labels and their corresponding cell locations
-        labels = {
-            'Cherwell': (2, 8),
-            'CM Ticket': (3, 8),
-            'Anticipated GL Date': (4, 8),
-            'Short Summary': (5, 8),
-            'Reason': (8, 8),
-            'Value': (9, 8),
-            'Impact': (10, 8),
-            'Additional Information': (11, 8)
-        }
-
-        # Create dictionary to store values for each label
-        values = {}
-
-        # Extract values from Excel file
-        for label, cell in labels.items():
-            value = ws.cell(row=cell[0], column=cell[1]).value
-            values[label] = value
-
-            # Find the paragraph with the label in the Word document and add the value
-            for paragraph in doc.paragraphs:
-                if label in paragraph.text:
-                    # Add the value from the Excel file to the end of the paragraph
-                    paragraph.add_run(" " + str(value))
-                    print(f"Updated paragraph text: '{paragraph.text}'")
-
-        # Show message box
-        pymsgbox.alert("Please choose a location to save the output file in the upcoming dialog.", "Save Output File")
-
-        # Choose output file
-        output_file = filedialog.asksaveasfilename(title="Save Output File As", defaultextension=".docx",
-                                                   filetypes=[("Word files", "*.docx")])
-        if not output_file:
-            print("No output file selected.")
-            exit()
-
-        # Save the output file
-        doc.save(output_file)
-
-        # Open the output file in Microsoft Word
-        # os.startfile(output_file)
-
-        print("Data has been extracted and saved to the Word template.")
-        # Delete temp Excel file
-        os.remove(excel_file)
+        if not selected_excel_file:
+            print("No Excel file found in attachments.")
+        else:
+            # pass selected_message, selected_excel_file, and current_doc to process_email()
+            process_email(selected_message, selected_excel_file, current_doc)
