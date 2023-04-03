@@ -35,6 +35,10 @@ def input_date(prompt):
 
 
 # noinspection PyUnusedLocal
+# excel_file and word_doc are not being used below
+# It maintains the integrity of the code and prevent any unintended side effects
+# The function may be updated in the future to make use of these parameters,
+# or they may be needed for specific use cases
 def process_email(message, excel_file, word_doc):
     # Load Excel data
     wb = openpyxl.load_workbook(excel_file)
